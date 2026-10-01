@@ -30,8 +30,11 @@ const LABELS = {
 
 function describe(col) {
   if (LABELS[col]) return LABELS[col];
-  const m = col.match(/^coil_(\d+)_(flux_linkage|voltage)$/);
-  if (m) return m[2] === "voltage" ? [`Coil ${m[1]} resistive drop (I·R)`, "V"] : [`Coil ${m[1]} flux linkage`, "Wb"];
+  const m = col.match(/^coil_(\d+)_(flux_linkage|voltage|current)$/);
+  if (m) {
+    if (m[2] === "current") return [`Coil ${m[1]} current`, "A"];
+    return m[2] === "voltage" ? [`Coil ${m[1]} resistive drop (I·R)`, "V"] : [`Coil ${m[1]} flux linkage`, "Wb"];
+  }
   return [col, ""];
 }
 const axisTitle = (col) => { const [l, u] = describe(col); return u ? `${l} (${u})` : l; };
@@ -123,9 +126,9 @@ function rect(x0, x1, y0, y1, line, fill) {
   return { type: "rect", xref: "x", yref: "y", x0, x1, y0, y1, line: { color: line, width: 1.5 }, fillcolor: fill, layer: "above" };
 }
 
-function coilShapes() {
+function coilShapes(meta = state.meta) {
   const shapes = [];
-  for (const c of state.meta.coils) {
+  for (const c of meta.coils) {
     for (const sign of [1, -1]) {
       const [a, b] = [sign * c.inner_radius, sign * c.outer_radius];
       shapes.push(rect(c.z0, c.z0 + c.length, Math.min(a, b), Math.max(a, b), "#f59e0b", "rgba(245,158,11,0.25)"));
@@ -134,8 +137,8 @@ function coilShapes() {
   return shapes;
 }
 
-function payloadShapes(z) {
-  const p = state.meta.payload;
+function payloadShapes(z, meta = state.meta) {
+  const p = meta.payload;
   const line = "#3fb950", fill = "rgba(63,185,80,0.15)";
   if (p.type === "sphere") {
     return [{ type: "circle", xref: "x", yref: "y", x0: z, x1: z + 2 * p.radius, y0: -p.radius, y1: p.radius,
@@ -146,7 +149,7 @@ function payloadShapes(z) {
   return [rect(z, z + p.length, r0, r1, line, fill), rect(z, z + p.length, -r1, -r0, line, fill)];
 }
 
-const shapesAt = (z) => coilShapes().concat(payloadShapes(z));
+const shapesAt = (z, meta = state.meta) => coilShapes(meta).concat(payloadShapes(z, meta));
 
 function currentZ() {
   const z = state.cols.z && state.cols.z[state.step];
@@ -260,24 +263,63 @@ function stopPlayback() {
   updateTransport();
 }
 
+// "rt:2" = twice real time, "fps:10" = ten recorded steps per second
+function playbackMode() {
+  const [kind, value] = $("#speed").value.split(":");
+  const n = parseFloat(value);
+  return kind === "rt" ? { realTime: true, speed: n } : { realTime: false, fps: n };
+}
+
+// Index of the last step recorded at or before simulated time t (-1 if t is before the first step)
+function stepAtTime(t) {
+  const times = state.cols.t || [];
+  let lo = 0, hi = times.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return found;
+}
+
 async function startPlayback() {
   if (!state.n) return;
   const id = ++state.playId;
   state.playing = true;
-  if (state.step >= state.n - 1 && !isRunning()) state.step = -1;      // replay from the start
+  if (state.step >= state.n - 1 && !isRunning()) await showFrame(0);   // replay from the start
   updateTransport();
+
+  // Real-time mode: simulated time = anchor.simTime + wall-clock time since anchor.wall, times the speed
+  let anchor = null;
+  const reanchor = () => { anchor = { wall: performance.now(), simTime: (state.cols.t || [])[state.step] || 0 }; };
+  reanchor();
+  state.reanchor = false;
 
   while (state.playing && id === state.playId) {
     const started = performance.now();
-    if (state.step >= state.n - 1) {
-      if (isRunning()) { await sleep(300); continue; }                  // wait for the next step to be recorded
-      if ($("#loop").checked) { await showFrame(0); }
-      else { break; }
+    const mode = playbackMode();
+    if (state.reanchor) { reanchor(); state.reanchor = false; }
+
+    if (mode.realTime) {
+      const target = anchor.simTime + (started - anchor.wall) / 1000 * mode.speed;
+      const next = Math.min(stepAtTime(target), state.n - 1);
+      if (next > state.step) {
+        await showFrame(next);                                           // may skip steps to stay on the clock
+      } else if (state.step >= state.n - 1) {
+        if (isRunning()) { reanchor(); await sleep(300); continue; }      // wait for the next step to be recorded
+        if ($("#loop").checked) { await showFrame(0); reanchor(); continue; }
+        break;
+      }
+      await sleep(Math.max(0, 16 - (performance.now() - started)));      // about 60 checks per second
     } else {
-      await showFrame(state.step + 1);
+      if (state.step >= state.n - 1) {
+        if (isRunning()) { await sleep(300); continue; }
+        if ($("#loop").checked) { await showFrame(0); }
+        else { break; }
+      } else {
+        await showFrame(state.step + 1);
+      }
+      await sleep(Math.max(0, 1000 / mode.fps - (performance.now() - started)));
     }
-    const interval = 1000 / parseFloat($("#fps").value);
-    await sleep(Math.max(0, interval - (performance.now() - started)));
   }
   if (id === state.playId) { state.playing = false; updateTransport(); }
 }
@@ -314,6 +356,14 @@ function yAxisUpdate(col) {
   return range ? { "yaxis.range": range } : { "yaxis.autorange": true };
 }
 
+// A coil on a "hold" schedule changes instantly, and the simulation keeps each step's current constant for
+// the whole step, so draw it as steps rather than as a slope between two samples.
+function lineShape(col) {
+  const m = col.match(/^coil_(\d+)_current$/);
+  const coil = m && state.meta && state.meta.coils[Number(m[1])];
+  return coil && coil.schedule && coil.schedule.interp === "step" && coil.schedule.points.length > 1 ? "hv" : "linear";
+}
+
 function markerFor(col) {
   const { x, y } = seriesFor(col);
   const i = Math.min(state.step, x.length - 1);
@@ -334,7 +384,7 @@ function buildPlots() {
     const { x, y } = seriesFor(col);
     const m = markerFor(col);
     Plotly.newPlot(div, [
-      { x, y, mode: "lines+markers", marker: { size: 3 }, line: { width: 1.6, color: "#58a6ff" }, hovertemplate: "%{x:.4g}, %{y:.5g}<extra></extra>" },
+      { x, y, mode: "lines+markers", marker: { size: 3 }, line: { width: 1.6, color: "#58a6ff", shape: lineShape(col) }, hovertemplate: "%{x:.4g}, %{y:.5g}<extra></extra>" },
       { x: m.x, y: m.y, mode: "markers", marker: { size: 10, color: "#f0f6fc", line: { color: "#f85149", width: 2 } }, hoverinfo: "skip" },
     ], baseLayout({
       showlegend: false,
@@ -489,6 +539,9 @@ function wireEvents() {
   $("#run").addEventListener("change", (e) => loadRun(e.target.value));
   $("#refresh").addEventListener("click", async () => { await loadRunList(); if (state.runId) await loadRun(state.runId); });
   $("#play").addEventListener("click", () => (state.playing ? stopPlayback() : startPlayback()));
+  const savedSpeed = localStorage.getItem("dactyl.speed");
+  if (savedSpeed && [...$("#speed").options].some((o) => o.value === savedSpeed)) $("#speed").value = savedSpeed;
+  $("#speed").addEventListener("change", (e) => { state.reanchor = true; localStorage.setItem("dactyl.speed", e.target.value); });
   $("#prev").addEventListener("click", () => { stopPlayback(); showFrame(state.step - 1); });
   $("#next").addEventListener("click", () => { stopPlayback(); showFrame(state.step + 1); });
   $("#slider").addEventListener("input", (e) => {
@@ -517,7 +570,7 @@ async function main() {
     const wanted = new URLSearchParams(location.hash.slice(1)).get("run");
     await loadRunList(false);
     if (!state.runs.length) {
-      placeholder.innerHTML = `<p class="placeholder">No runs found in the results folder.<br>Run a simulation (it records automatically), then press Refresh.</p>`;
+      placeholder.innerHTML = `<p class="placeholder">No runs found in the results folder.<br>Open "New simulation" above to start one, or run a simulation from a terminal and press Refresh.</p>`;
       return;
     }
     const initial = state.runs.some((r) => r.id === wanted) ? wanted : state.runs[0].id;

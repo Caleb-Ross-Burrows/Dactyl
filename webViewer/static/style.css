@@ -54,3 +54,49 @@ button:hover { border-color: var(--accent); }
 .chips label { color: var(--text); }
 #plots { display: grid; gap: 6px; }
 .plot { width: 100%; height: 190px; }
+
+/* ------------------------------------------------------------ New simulation */
+details.card > summary { cursor: pointer; display: flex; align-items: center; gap: 12px; list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: "\25B8"; color: var(--muted); }
+details.card[open] > summary::before { content: "\25BE"; }
+h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.setup-grid { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 8px 28px; margin-top: 4px; }
+@media (max-width: 900px) { .setup-grid { grid-template-columns: 1fr; } }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; }
+.field { flex-direction: column; align-items: stretch; gap: 3px; font-size: 12px; }
+.field input, .field select { width: 100%; }
+.field[hidden] { display: none; }
+input[type=text] { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; }
+input.invalid, select.invalid { border-color: #f85149; background: #2a1316; }
+#coil-table { width: 100%; border-collapse: collapse; }
+#coil-table th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 2px 6px 4px 0; }
+#coil-table td { padding: 2px 6px 2px 0; }
+#coil-table input[type=number] { width: 100%; min-width: 70px; }
+#coil-table td.computed { color: var(--muted); font-family: ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+#coil-table button { padding: 2px 7px; min-width: 0; }
+#preview { width: 100%; height: 230px; margin-top: 10px; }
+#setup-messages ul { margin: 8px 0 0; padding-left: 20px; }
+#setup-messages .error { color: #f85149; }
+#setup-messages .warning { color: #d29922; }
+.setup-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+button.primary:hover:not(:disabled) { background: #2ea043; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+#job-log { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 10px 0 0;
+           max-height: 190px; overflow: auto; font: 12px/1.35 ui-monospace, monospace; white-space: pre-wrap; }
+
+/* ---------------------------------------------------------- Current schedules */
+#schedule-editor { margin-top: 12px; padding: 8px 12px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+#schedule-editor h3 { margin: 0; }
+#schedule-editor p { margin: 0 0 8px; }
+#sched-table { border-collapse: collapse; }
+#sched-table th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 2px 8px 4px 0; }
+#sched-table td { padding: 2px 8px 2px 0; }
+#sched-table input { width: 130px; }
+#sched-table.off { opacity: .4; pointer-events: none; }
+button.sched-btn { white-space: nowrap; padding: 2px 8px; }
+button.sched-btn.active { border-color: var(--accent); color: var(--accent); }
+button.sched-btn.invalid { border-color: #f85149; background: #2a1316; }
+#coil-table input:disabled { opacity: .45; }
+#schedule-plot { width: 100%; height: 230px; margin-top: 8px; }

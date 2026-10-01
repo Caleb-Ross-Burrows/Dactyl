@@ -45,6 +45,7 @@ class RunRecorder:
         self.dir = root / self.run_id     # created on the first recorded step
 
         self.grid_cell = grid_cell
+        self.config: dict | None = None     # the settings the run was built from, set by Simulation
         self.meta: dict | None = None
         self._grid: tuple[np.ndarray, np.ndarray] | None = None
         self._history = None
@@ -70,6 +71,7 @@ class RunRecorder:
                 "z0": sim.coil_z0[idx],
                 "turns": coil.turns,
                 "current": coil.current,
+                "schedule": coil.schedule.to_config(),
                 "awg": coil.awg,
             })
 
@@ -105,6 +107,7 @@ class RunRecorder:
             "coils": coils,
             "payload": payload_meta,
             "max_z": sim.max_z,
+            "config": self.config,
             "min_z": sim.min_z,
             "grid": {
                 "n_r": n_r, "n_z": n_z,
@@ -154,9 +157,13 @@ class RunRecorder:
         if stats:
             row["B_payload_mean"] = stats["mean"]
             row["B_payload_max"] = stats["max"]
-        for coil_id, props in circuits.items():
-            row[f"{coil_id}_flux_linkage"] = props["flux_linkage"]
-            row[f"{coil_id}_voltage"] = props["voltage"]
+        for coil_id, commanded in sim.coil_currents.items():
+            props = circuits.get(coil_id)
+            # The current FEMM reports back is the one it solved with; fall back to the scheduled value
+            row[f"{coil_id}_current"] = props["current"] if props else commanded
+            if props:
+                row[f"{coil_id}_flux_linkage"] = props["flux_linkage"]
+                row[f"{coil_id}_voltage"] = props["voltage"]
 
         frame_path = self.dir / "frames" / f"{self._steps:06d}.npy"
         tmp = frame_path.with_name(frame_path.name + ".tmp")

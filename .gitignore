@@ -5,4 +5,4 @@ __pycache__
 *.fem
 # Saved simulation runs and the locally cached Plotly bundle
 results/
-viewer/static/vendor/
+webViewer/static/vendor/

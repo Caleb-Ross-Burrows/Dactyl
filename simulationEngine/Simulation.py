@@ -8,22 +8,25 @@ import femm
 from Coil import Coil
 from Payload import Payload
 from Recorder import RunRecorder
+from SimConfig import GROUP_MARGIN
 
 
 
 class Simulation:
     # Clearance (m) used when grouping the payload geometry by rectangle select.
     # Nothing else may sit closer than this to the payload, or it would get grouped (and moved) too.
-    GROUP_MARGIN = 1e-4
+    GROUP_MARGIN = GROUP_MARGIN
 
     FEM_FILE = "run.fem"
 
     def __init__(self, time_step: float, record: bool = True, results_dir=None,
                  run_name: str | None = None, grid_cell: float | None = None,
-                 min_z: float = -0.25) -> None:
+                 min_z: float = -0.25, femm_path: str | None = None, config: dict | None = None) -> None:
         """
         min_z:       furthest back (m) the payload's rear face may travel. The open boundary is sized to
                      contain this range, and the run stops if the payload goes behind it.
+        femm_path:   folder containing femm.exe, if FEMM is not installed in the default Wine location
+        config:      the settings this run was built from, stored with the run so it can be reloaded in the viewer
         record:      save every step to disk so it can be opened in the web viewer (viewer/server.py)
         results_dir: where to save runs (default: <repo>/results)
         run_name:    optional label added to the run's folder name
@@ -35,6 +38,8 @@ class Simulation:
         self.time = 0
         self.dt = time_step
         self.recorder = RunRecorder(results_dir, run_name, grid_cell) if record else None
+        if self.recorder is not None:
+            self.recorder.config = config
 
         self.payload = None
         self.payload_label = None     
@@ -47,11 +52,12 @@ class Simulation:
         self._abc_created = False
 
         self.coils = None
+        self.coil_currents = {}  # current applied to each coil in the latest step, A
         self.coil_z0 = []       # rear face of each coil, filled in by define_coils()
         # Define the 'finish line' in define_coils()
         self.max_z = None
 
-        femm.openfemm()
+        femm.openfemm(femmpath=femm_path) if femm_path else femm.openfemm()
         femm.main_minimize()
         femm.newdocument(0)  # Magnetics
 
@@ -91,7 +97,7 @@ class Simulation:
     def define_coil(self, coil: Coil, coil_id: str, z_coord: float) -> None:
         femm.mi_addcircprop(
             coil_id,
-            coil.current,
+            coil.schedule.at(0.0),      # starting current; updated every step from the coil's schedule
             1       # FEMM: 0 = parallel, 1 = series. Only series applies the block's turn count (J = N*i/A)
         )
 
@@ -289,6 +295,8 @@ class Simulation:
             self._make_boundary()
             self._abc_created = True
 
+        self._apply_currents()
+
         femm.mi_saveas(self.FEM_FILE)
         femm.mi_analyze()
         femm.mi_loadsolution()
@@ -299,6 +307,17 @@ class Simulation:
         self._record_step()
 
         self.time += self.dt
+
+
+    def _apply_currents(self) -> None:
+        """Set every coil's current to its scheduled value at the current time. Call before solving."""
+        self.coil_currents = {}
+        for idx, coil in enumerate(self.coils):
+            coil_id = f"coil_{idx}"
+            value = coil.schedule.at(self.time)
+            # propnum 1 is the circuit's total current (verified against mo_getcircuitproperties)
+            femm.mi_modifycircprop(coil_id, 1, value)
+            self.coil_currents[coil_id] = value
 
 
     def get_circuit_properties(self) -> dict:
@@ -312,7 +331,7 @@ class Simulation:
                     current, voltage, flux_linkage = femm.mo_getcircuitproperties(coil_id)
                 except (TypeError, ValueError):
                     continue
-                circuits[coil_id] = {"voltage": voltage, "flux_linkage": flux_linkage}
+                circuits[coil_id] = {"current": current, "voltage": voltage, "flux_linkage": flux_linkage}
                 break
             else:
                 warnings.warn(f"Could not read circuit properties of {coil_id} at t = {self.time:.4f} s")
@@ -391,7 +410,8 @@ class Simulation:
         )
 
 
-    def run(self, max_steps: int = 10000, max_time: float | None = None) -> None:
+    def run(self, max_steps: int = 1000, max_time: float | None = None) -> str:
+        """Run until the payload passes the last coil or a limit is hit. Returns 'complete' or 'stopped'."""
         self._check_ready()
 
         status, message = "complete", ""
@@ -428,6 +448,7 @@ class Simulation:
         finally:
             if self.recorder is not None:
                 self.recorder.finish(status, message)
+        return status
 
 
     def close(self) -> None:

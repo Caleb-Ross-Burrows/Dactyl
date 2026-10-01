@@ -1,10 +1,14 @@
 import warnings
 import math
 
+from CurrentSchedule import CurrentSchedule
+
 # Coils will be assumed to be made of copper wire of a specified AWG size
 # Distance units are all meters, current units are amps
 class Coil:
-    def __init__(self, inner_radius: float, length: float, turns: int, awg: int, current: float):
+    def __init__(self, inner_radius: float, length: float, turns: int, awg: int, current: float,
+                 schedule: CurrentSchedule | None = None):
+        """current: constant current (A), used when no schedule is given. schedule: current over time."""
         if inner_radius <= 0:
             raise ValueError("inner_radius must be greater than zero")
         if length <= 0:
@@ -17,6 +21,9 @@ class Coil:
         self.turns = turns
         self.awg = awg
         self.current = current
+        self.schedule = schedule if schedule is not None else CurrentSchedule.constant(current)
+        # Sizing and the density estimate below use the largest current the coil will ever carry
+        self.peak_current = self.schedule.peak
 
         self.wire_diameter = 0.127 * 92**((36 - self.awg) / 39) / 1000
         self.wire_area = 0.25 * math.pi * self.wire_diameter**2
@@ -35,7 +42,7 @@ class Coil:
 
         # If coil is sparsely wound, approximate current density by multiplying standard current density 
         # by ratio of total wire x-section area vs total coil x-section area
-        wire_current_density = self.current / self.wire_area
+        wire_current_density = self.peak_current / self.wire_area
         self.current_density = (
             wire_current_density if num_of_layers >= 1
             else wire_current_density * (self.turns * self.wire_area) / (self.length*(self.outer_radius - self.inner_radius))

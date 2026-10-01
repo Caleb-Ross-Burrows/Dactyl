@@ -16,6 +16,94 @@
   </header>
 
   <main>
+    <details class="card" id="setup">
+      <summary><h2>New simulation</h2><span class="muted" id="setup-hint">configure the coils and payload, then run</span></summary>
+
+      <div class="setup-grid">
+        <div class="setup-col">
+          <h3>Run</h3>
+          <div class="fields">
+            <label class="field">Name (optional)<input data-path="name" type="text" maxlength="40" placeholder="added to the run's folder name"></label>
+            <label class="field">Time step (s)<input data-path="dt" type="number" step="any"></label>
+            <label class="field">Max steps<input data-path="max_steps" type="number" step="1"></label>
+            <label class="field">Max time (s), optional<input data-path="max_time" type="number" step="any" placeholder="no limit"></label>
+            <label class="field">Payload start z (m)<input data-path="start_z" type="number" step="any"></label>
+            <label class="field">Furthest back z (m)<input data-path="min_z" type="number" step="any"></label>
+            <label class="field">Gap between coils (m)<input data-path="coil_spacing" type="number" step="any"></label>
+          </div>
+
+          <h3>Payload</h3>
+          <div class="fields">
+            <label class="field">Shape
+              <select data-path="payload.type">
+                <option value="cylinder">Cylinder</option>
+                <option value="sphere">Sphere</option>
+                <option value="tube">Tube</option>
+              </select>
+            </label>
+            <label class="field">Material<input data-path="payload.material" type="text" list="materials" autocomplete="off"></label>
+            <datalist id="materials"></datalist>
+            <label class="field">Mass (kg)<input data-path="payload.mass" type="number" step="any"></label>
+            <label class="field" data-for="sphere cylinder">Radius (m)<input data-path="payload.radius" type="number" step="any"></label>
+            <label class="field" data-for="tube">Inner radius (m)<input data-path="payload.inner_radius" type="number" step="any"></label>
+            <label class="field" data-for="tube">Outer radius (m)<input data-path="payload.outer_radius" type="number" step="any"></label>
+            <label class="field" data-for="cylinder tube">Length (m)<input data-path="payload.length" type="number" step="any"></label>
+          </div>
+        </div>
+
+        <div class="setup-col wide">
+          <div class="card-head">
+            <h3>Coils</h3>
+            <span class="muted">numbered from the payload's end; each is a series winding</span>
+            <span class="spacer"></span>
+            <button id="add-coil" type="button">Add coil</button>
+          </div>
+          <table id="coil-table">
+            <thead><tr>
+              <th>#</th><th>Inner radius (m)</th><th>Length (m)</th><th>Turns</th><th>Wire</th><th>Current (A)</th>
+              <th title="Make the current change over time">Schedule</th>
+              <th title="Worked out from the wire size and turns">Outer radius (m)</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <div id="schedule-editor" hidden>
+            <div class="card-head">
+              <h3 id="sched-title">Coil current</h3>
+              <label class="inline"><input id="sched-enabled" type="checkbox"> Follow a schedule</label>
+              <label class="inline" id="sched-interp-label">Between points
+                <select id="sched-interp">
+                  <option value="step">hold (switch instantly)</option>
+                  <option value="linear">ramp (straight line)</option>
+                </select>
+              </label>
+              <span class="spacer"></span>
+              <button id="sched-add" type="button">Add point</button>
+              <button id="sched-close" type="button">Done</button>
+            </div>
+            <p class="muted" id="sched-help">Before the first point the first current is held, and after the last point the last one is held.
+              To switch a coil on at t = 0.1 s, use the points (0 s, 0 A) and (0.1 s, 10 A).</p>
+            <table id="sched-table">
+              <thead><tr><th>#</th><th>Time (s)</th><th>Current (A)</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="preview"></div>
+          <div id="schedule-plot" hidden></div>
+        </div>
+      </div>
+
+      <div id="setup-messages"></div>
+
+      <div class="setup-actions">
+        <button id="run-sim" class="primary" type="button">Run simulation</button>
+        <button id="stop-sim" type="button" disabled>Stop</button>
+        <button id="load-run" type="button" title="Copy the settings of the run selected above into this form">Load settings from selected run</button>
+        <button id="reset-setup" type="button">Reset to defaults</button>
+        <span id="job-status" class="muted"></span>
+      </div>
+      <pre id="job-log" hidden></pre>
+    </details>
+
     <section class="card">
       <div class="card-head">
         <h2>Flux density |B|</h2>
@@ -34,13 +122,23 @@
         <input id="slider" type="range" min="0" max="0" value="0">
         <span id="step-label" class="mono"></span>
         <label>Speed
-          <select id="fps">
-            <option value="2">2 steps/s</option>
-            <option value="5">5 steps/s</option>
-            <option value="10" selected>10 steps/s</option>
-            <option value="20">20 steps/s</option>
-            <option value="30">30 steps/s</option>
-            <option value="60">60 steps/s</option>
+          <select id="speed" title="Real time follows the simulated clock, skipping frames if the display can't keep up">
+            <optgroup label="Real time (simulated time vs. wall clock)">
+              <option value="rt:1">Real time (1×)</option>
+              <option value="rt:0.5">0.5× real time</option>
+              <option value="rt:0.25">0.25× real time</option>
+              <option value="rt:0.1">0.1× real time</option>
+              <option value="rt:2">2× real time</option>
+              <option value="rt:5">5× real time</option>
+            </optgroup>
+            <optgroup label="Steps per second">
+              <option value="fps:2">2 steps/s</option>
+              <option value="fps:5">5 steps/s</option>
+              <option value="fps:10" selected>10 steps/s</option>
+              <option value="fps:20">20 steps/s</option>
+              <option value="fps:30">30 steps/s</option>
+              <option value="fps:60">60 steps/s</option>
+            </optgroup>
           </select>
         </label>
         <label class="inline"><input id="loop" type="checkbox"> loop</label>
@@ -62,5 +160,6 @@
   </main>
 
   <script src="/static/app.js"></script>
+  <script src="/static/setup.js"></script>
 </body>
 </html>
