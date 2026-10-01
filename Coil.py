@@ -21,7 +21,10 @@ class Coil:
                 "Coil is sparsely wound, results may be innacurate. For complete coil: turns * wire diameter should be greater than or equal to coil length"
                 )
 
-        self.outer_radius = max(self.wire_diameter * num_of_layers, self.wire_diameter)
+        self.outer_radius = max(
+            self.inner_radius + self.wire_diameter * num_of_layers,
+            self.inner_radius + self.wire_diameter
+            )
 
         # If coil is sparsely wound, approximate current density by multiplying standard current density 
         # by ratio of total wire x-section area vs total coil x-section area
