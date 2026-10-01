@@ -1,5 +1,6 @@
 import math
 import os
+import time
 import warnings
 
 import femm
@@ -18,8 +19,11 @@ class Simulation:
     FEM_FILE = "run.fem"
 
     def __init__(self, time_step: float, record: bool = True, results_dir=None,
-                 run_name: str | None = None, grid_cell: float | None = None) -> None:
+                 run_name: str | None = None, grid_cell: float | None = None,
+                 min_z: float = -0.25) -> None:
         """
+        min_z:       furthest back (m) the payload's rear face may travel. The open boundary is sized to
+                     contain this range, and the run stops if the payload goes behind it.
         record:      save every step to disk so it can be opened in the web viewer (viewer/server.py)
         results_dir: where to save runs (default: <repo>/results)
         run_name:    optional label added to the run's folder name
@@ -35,8 +39,11 @@ class Simulation:
         self.payload = None
         self.payload_label = None     
 
-        # Open air label, kept off the r=0 axis and behind the payload start (z < 0)
-        self.air_label = (0.001, -0.001)
+        self.min_z = min_z
+        self.payload_extent = 0.0   # axial size of the payload, set by define_payload()
+
+        # Open air label, placed by define_coils() once the coil size is known
+        self.air_label = None
         self._abc_created = False
 
         self.coils = None
@@ -45,7 +52,7 @@ class Simulation:
         self.max_z = None
 
         femm.openfemm()
-        # femm.main_minimize()
+        femm.main_minimize()
         femm.newdocument(0)  # Magnetics
 
         # Axisymmetric problem
@@ -58,13 +65,12 @@ class Simulation:
 
         femm.mi_getmaterial("Air")
 
-        # The payload should never end up in -z so it should be fine to initialize air like this
-        self._set_air_label()
-
 
     def _set_air_label(self) -> None:
         # Safe to call repeatedly: adding a label on top of an existing one is a no-op in FEMM,
         # so this also restores the air label if FEMM drops it after a geometry edit.
+        if self.air_label is None:
+            return
         r, z = self.air_label
         femm.mi_addblocklabel(r, z)
         femm.mi_selectlabel(r, z)
@@ -143,12 +149,18 @@ class Simulation:
 
         self.max_z = z_offset - coil_spacing
 
+        # The air label sits just outside the outermost coil radius, halfway along the coil stack.
+        # The payload lives inside the coil bore, so it can never reach this point wherever it travels.
+        max_outer = max(coil.outer_radius for coil in coil_array)
+        self.air_label = (1.25 * max_outer, 0.5 * self.max_z)
+        self._set_air_label()
+
     # The z_coord is the "furthest back" point of the payload
     def define_payload(self, payload: Payload, z_coord) -> None:
         if self.payload is not None:
             raise RuntimeError("A payload has already been defined for this simulation")
-        if z_coord < 0:
-            raise ValueError("z_coord must be >= 0, the open-air label sits behind z = 0")
+        if z_coord < self.min_z:
+            raise ValueError(f"z_coord ({z_coord} m) is behind min_z ({self.min_z} m), the back limit of the model")
 
         # The payload must fit inside the coil bore, otherwise the geometries intersect
         if self.coils:
@@ -163,6 +175,7 @@ class Simulation:
         # Load payload into sim
         self.payload = payload
         self.payload.z = z_coord
+        self.payload_extent = 2 * payload.radius if payload.type == "sphere" else payload.length
 
         femm.mi_getmaterial(payload.material)
 
@@ -253,12 +266,27 @@ class Simulation:
             raise RuntimeError("Call define_payload() before running the simulation")
 
 
+    def _make_boundary(self) -> None:
+        """Open boundary: a sphere centred on the axis, sized to contain the coils and the payload's whole travel."""
+        z_back = min(self.min_z, 0.0)
+        z_front = self.max_z + self.payload_extent
+        max_outer = max(coil.outer_radius for coil in self.coils)
+
+        half_length = (z_front - z_back) / 2
+        centre = (z_front + z_back) / 2
+        # 1.75x the half-diagonal of the region of interest (about what FEMM's default picks)
+        radius = 1.75 * math.hypot(half_length, max_outer)
+
+        # mi_makeABC(shells, radius, centre r, centre z, boundary type: 0 = Dirichlet)
+        femm.mi_makeABC(7, radius, 0, centre, 0)
+
+
     def run_single_step(self) -> None:
         self._check_ready()
 
         if not self._abc_created:
             # Boundary condition, only create it once or the shells get duplicated
-            femm.mi_makeABC()
+            self._make_boundary()
             self._abc_created = True
 
         femm.mi_saveas(self.FEM_FILE)
@@ -333,23 +361,34 @@ class Simulation:
         self._set_air_label()
     
 
-    def get_payload_force(self) -> float:
+    def get_payload_force(self, attempts: int = 5) -> float:
         label_r, label_z = self.payload_label
 
-        femm.mo_clearblock()
-        femm.mo_selectblock(label_r, label_z)
+        # pyfemm talks to FEMM through files, and an occasional reply comes back empty (as []).
+        # An empty reply can also mean the block was not selected, so re-select on every attempt.
+        force_z = None
+        for attempt in range(attempts):
+            femm.mo_clearblock()
+            femm.mo_selectblock(label_r, label_z)
 
-        # 19 is the index number for force integral
-        force_z = femm.mo_blockintegral(19)
+            # 19 is the index number for force integral
+            force_z = femm.mo_blockintegral(19)
 
-        femm.mo_clearblock()
+            femm.mo_clearblock()
 
-        if force_z is None or not math.isfinite(force_z):
-            raise RuntimeError(
-                f"Invalid force from FEMM ({force_z!r}). Check that the payload label "
-                f"{self.payload_label} is inside the payload and that the solution loaded."
+            if isinstance(force_z, (int, float)) and math.isfinite(force_z):
+                return float(force_z)
+
+            warnings.warn(
+                f"FEMM returned {force_z!r} for the payload force at t = {self.time:.4f} s "
+                f"(attempt {attempt + 1}/{attempts}), retrying"
             )
-        return force_z
+            time.sleep(0.2 * (attempt + 1))
+
+        raise RuntimeError(
+            f"Invalid force from FEMM ({force_z!r}) after {attempts} attempts. Check that the payload "
+            f"label {self.payload_label} is inside the payload and that the solution loaded."
+        )
 
 
     def run(self, max_steps: int = 10000, max_time: float | None = None) -> None:
@@ -374,9 +413,9 @@ class Simulation:
                 self.update_payload()
                 steps += 1
 
-                # Moving backwards past the start would put the payload into the open-air label
-                if self.payload.z < 0:
-                    message = "Payload moved behind z = 0, stopping the simulation"
+                # Past this point the payload would leave the region the open boundary was sized for
+                if self.payload.z < self.min_z:
+                    message = f"Payload moved behind min_z = {self.min_z} m, stopping the simulation"
                     status = "stopped"
                     warnings.warn(message)
                     break

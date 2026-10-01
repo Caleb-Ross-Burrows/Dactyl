@@ -84,7 +84,7 @@ class RunRecorder:
         payload_extent = 2 * payload_meta["radius"] if payload.type == "sphere" else payload_meta["length"]
         r_max = 3 * max_outer
         pad = 0.15 * sim.max_z + 0.05
-        z_min = -pad
+        z_min = min(-pad, sim.min_z - 0.05)
         z_max = sim.max_z + payload_extent + pad
 
         cell = self.grid_cell or max(0.004, (z_max - z_min) / 320)
@@ -105,6 +105,7 @@ class RunRecorder:
             "coils": coils,
             "payload": payload_meta,
             "max_z": sim.max_z,
+            "min_z": sim.min_z,
             "grid": {
                 "n_r": n_r, "n_z": n_z,
                 "r_max": float(r_axis[-1]), "z_min": float(z_axis[0]), "z_max": float(z_axis[-1]),

@@ -31,7 +31,7 @@ const LABELS = {
 function describe(col) {
   if (LABELS[col]) return LABELS[col];
   const m = col.match(/^coil_(\d+)_(flux_linkage|voltage)$/);
-  if (m) return m[2] === "voltage" ? [`Coil ${m[1]} voltage`, "V"] : [`Coil ${m[1]} flux linkage`, "Wb"];
+  if (m) return m[2] === "voltage" ? [`Coil ${m[1]} resistive drop (I·R)`, "V"] : [`Coil ${m[1]} flux linkage`, "Wb"];
   return [col, ""];
 }
 const axisTitle = (col) => { const [l, u] = describe(col); return u ? `${l} (${u})` : l; };
@@ -296,6 +296,24 @@ function seriesFor(col) {
   return { x, y };
 }
 
+// A series that is constant up to floating-point noise (e.g. the resistive drop, which does not
+// depend on the payload) would otherwise be auto-scaled to that noise and show absurd tick labels.
+// Returns an explicit y range for such a series, or null to let Plotly auto-scale.
+function flatRange(values) {
+  const v = values.filter(Number.isFinite);
+  if (v.length < 2) return null;
+  const lo = Math.min(...v), hi = Math.max(...v);
+  const scale = Math.max(Math.abs(lo), Math.abs(hi));
+  if (hi - lo > 1e-6 * scale) return null;
+  const pad = scale > 0 ? 0.05 * scale : 1;
+  return [lo - pad, hi + pad];
+}
+
+function yAxisUpdate(col) {
+  const range = flatRange(seriesFor(col).y);
+  return range ? { "yaxis.range": range } : { "yaxis.autorange": true };
+}
+
 function markerFor(col) {
   const { x, y } = seriesFor(col);
   const i = Math.min(state.step, x.length - 1);
@@ -321,7 +339,7 @@ function buildPlots() {
     ], baseLayout({
       showlegend: false,
       xaxis: axisStyle({ title: axisTitle(state.xcol) }),
-      yaxis: axisStyle({ title: { text: axisTitle(col), font: { size: 11 } } }),
+      yaxis: axisStyle({ title: { text: axisTitle(col), font: { size: 11 } }, exponentformat: "none", ...(flatRange(y) ? { range: flatRange(y) } : {}) }),
       margin: { l: 80, r: 20, t: 8, b: 40 },
     }), PLOT_CONFIG).then(() => {
       div.on("plotly_click", (ev) => {
@@ -349,6 +367,7 @@ function refreshPlotData() {
     const { x, y } = seriesFor(div.dataset.col);
     const m = markerFor(div.dataset.col);
     Plotly.restyle(div, { x: [x, m.x], y: [y, m.y] }, [0, 1]);
+    Plotly.relayout(div, yAxisUpdate(div.dataset.col));
   }
 }
 
