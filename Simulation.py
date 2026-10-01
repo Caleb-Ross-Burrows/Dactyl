@@ -1,8 +1,9 @@
 import femm
-import  matplotlib as plt
+import  matplotlib.pyplot as plt
 import numpy as np 
 
 from Coil import Coil
+from Payload import Payload
 
 
 
@@ -85,6 +86,68 @@ class Simulation:
         for idx, coil in enumerate(coil_array):
             self.define_coil(coil, "coil_" + str(idx), z_offset)
             z_offset += (coil.length + coil_spacing)
+
+    # The z_coord is the "furthest back" point of the payload
+    def define_payload(self, payload: Payload, z_coord) -> None:
+        femm.mi_addmaterial(payload.material)
+
+        # Enclosed region for the payload
+        match payload.type:
+            case "sphere":
+                femm.mi_drawarc(
+                    0,
+                    z_coord - payload.radius,
+                    0,
+                    z_coord + payload.radius,
+                    180,
+                    1
+                )
+                # Close the semicircle along the axis of revolution.
+                femm.mi_addsegment(
+                    0,
+                    z_coord + payload.radius,
+                    0,
+                    z_coord - payload.radius
+                )
+
+                label_r = payload.radius / 2
+                label_z = z_coord
+
+            case "cylinder":
+                femm.mi_drawrectangle(
+                    0,
+                    z_coord,
+                    payload.radius,
+                    z_coord + payload.length
+                )
+                label_r = payload.radius / 2
+                label_z = z_coord + payload.length / 2
+
+            case "tube":
+                femm.mi_drawrectangle(
+                    payload.inner_radius,
+                    z_coord,
+                    payload.outer_radius,
+                    z_coord + payload.length
+                )
+                label_r = (payload.inner_radius + payload.outer_radius) / 2
+                label_z = z_coord + payload.length / 2
+
+        # Add and select a block label inside the payload's cross-section.
+        femm.mi_addblocklabel(label_r, label_z)
+        femm.mi_selectlabel(label_r, label_z)
+
+        femm.mi_setblockprop(
+            payload.material,
+            0,
+            0,
+            "",
+            0,
+            0,
+            0
+        )
+
+        femm.mi_clearselected()
 
     def run(self):
         # Boundary condition
