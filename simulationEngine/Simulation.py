@@ -1,10 +1,12 @@
 import math
+import os
 import warnings
 
 import femm
 
 from Coil import Coil
 from Payload import Payload
+from Recorder import RunRecorder
 
 
 
@@ -13,12 +15,22 @@ class Simulation:
     # Nothing else may sit closer than this to the payload, or it would get grouped (and moved) too.
     GROUP_MARGIN = 1e-4
 
-    def __init__(self, time_step: float) -> None:
+    FEM_FILE = "run.fem"
+
+    def __init__(self, time_step: float, record: bool = True, results_dir=None,
+                 run_name: str | None = None, grid_cell: float | None = None) -> None:
+        """
+        record:      save every step to disk so it can be opened in the web viewer (viewer/server.py)
+        results_dir: where to save runs (default: <repo>/results)
+        run_name:    optional label added to the run's folder name
+        grid_cell:   density-plot cell size in metres (default: chosen from the geometry)
+        """
         if time_step <= 0:
             raise ValueError("time_step must be greater than zero")
 
         self.time = 0
         self.dt = time_step
+        self.recorder = RunRecorder(results_dir, run_name, grid_cell) if record else None
 
         self.payload = None
         self.payload_label = None     
@@ -28,6 +40,7 @@ class Simulation:
         self._abc_created = False
 
         self.coils = None
+        self.coil_z0 = []       # rear face of each coil, filled in by define_coils()
         # Define the 'finish line' in define_coils()
         self.max_z = None
 
@@ -124,6 +137,7 @@ class Simulation:
 
         z_offset = 0
         for idx, coil in enumerate(coil_array):
+            self.coil_z0.append(z_offset)
             self.define_coil(coil, "coil_" + str(idx), z_offset)
             z_offset += (coil.length + coil_spacing)
 
@@ -247,14 +261,47 @@ class Simulation:
             femm.mi_makeABC()
             self._abc_created = True
 
-        femm.mi_saveas("run.fem")
+        femm.mi_saveas(self.FEM_FILE)
         femm.mi_analyze()
         femm.mi_loadsolution()
 
         self.payload.force = self.get_payload_force()
         print(f"t = {self.time:.4f} s, z = {self.payload.z:.4f} m, F = {self.payload.force:.4f} N")
 
+        self._record_step()
+
         self.time += self.dt
+
+
+    def get_circuit_properties(self) -> dict:
+        """Voltage and flux linkage of every coil circuit. Call after mi_loadsolution()."""
+        circuits = {}
+        for idx in range(len(self.coils)):
+            coil_id = f"coil_{idx}"
+            # pyfemm talks to FEMM through files and an occasional read comes back empty, so retry
+            for _ in range(3):
+                try:
+                    current, voltage, flux_linkage = femm.mo_getcircuitproperties(coil_id)
+                except (TypeError, ValueError):
+                    continue
+                circuits[coil_id] = {"voltage": voltage, "flux_linkage": flux_linkage}
+                break
+            else:
+                warnings.warn(f"Could not read circuit properties of {coil_id} at t = {self.time:.4f} s")
+        return circuits
+
+
+    def _record_step(self) -> None:
+        if self.recorder is None:
+            return
+        # A problem with recording must never take the simulation down with it
+        try:
+            solution_path = os.path.splitext(self.FEM_FILE)[0] + ".ans"
+            self.recorder.record_step(self, solution_path, self.get_circuit_properties())
+        except Exception as error:
+            warnings.warn(f"Recording disabled, could not save step at t = {self.time:.4f} s: {error!r}")
+            self.recorder.finish("error", f"Recording failed: {error!r}")
+            self.recorder = None
 
 
     def update_payload(self,) -> None:
@@ -308,23 +355,40 @@ class Simulation:
     def run(self, max_steps: int = 10000, max_time: float | None = None) -> None:
         self._check_ready()
 
+        status, message = "complete", ""
         steps = 0
-        while self.payload.z < self.max_z:
-            if steps >= max_steps:
-                warnings.warn(f"Stopped after {max_steps} steps without reaching the end of the coils")
-                break
-            if max_time is not None and self.time >= max_time:
-                warnings.warn(f"Stopped at max_time = {max_time} s without reaching the end of the coils")
-                break
+        try:
+            while self.payload.z < self.max_z:
+                if steps >= max_steps:
+                    message = f"Stopped after {max_steps} steps without reaching the end of the coils"
+                    status = "stopped"
+                    warnings.warn(message)
+                    break
+                if max_time is not None and self.time >= max_time:
+                    message = f"Stopped at max_time = {max_time} s without reaching the end of the coils"
+                    status = "stopped"
+                    warnings.warn(message)
+                    break
 
-            self.run_single_step()
-            self.update_payload()
-            steps += 1
+                self.run_single_step()
+                self.update_payload()
+                steps += 1
 
-            # Moving backwards past the start would put the payload into the open-air label
-            if self.payload.z < 0:
-                warnings.warn("Payload moved behind z = 0, stopping the simulation")
-                break
+                # Moving backwards past the start would put the payload into the open-air label
+                if self.payload.z < 0:
+                    message = "Payload moved behind z = 0, stopping the simulation"
+                    status = "stopped"
+                    warnings.warn(message)
+                    break
+        except KeyboardInterrupt:
+            status, message = "interrupted", "Interrupted by the user"
+            raise
+        except Exception as error:
+            status, message = "error", repr(error)
+            raise
+        finally:
+            if self.recorder is not None:
+                self.recorder.finish(status, message)
 
 
     def close(self) -> None:

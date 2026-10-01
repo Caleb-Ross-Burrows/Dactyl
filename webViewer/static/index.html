@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dactyl viewer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Dactyl</h1>
+    <label>Run <select id="run"></select></label>
+    <button id="refresh" title="Reload the list of runs">Refresh</button>
+    <span id="status" class="badge"></span>
+    <span id="summary" class="muted"></span>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="card-head">
+        <h2>Flux density |B|</h2>
+        <span class="muted">axisymmetric cross-section, mirrored about the axis (r = 0)</span>
+        <span class="spacer"></span>
+        <label>Colour max (T) <input id="cmax" type="number" step="any" min="0"></label>
+        <label class="inline"><input id="cmax-auto" type="checkbox" checked> auto</label>
+      </div>
+
+      <div id="density"><p class="placeholder">Loading…</p></div>
+
+      <div class="transport">
+        <button id="play">Play</button>
+        <button id="prev" title="Previous step">&#9664;</button>
+        <button id="next" title="Next step">&#9654;</button>
+        <input id="slider" type="range" min="0" max="0" value="0">
+        <span id="step-label" class="mono"></span>
+        <label>Speed
+          <select id="fps">
+            <option value="2">2 steps/s</option>
+            <option value="5">5 steps/s</option>
+            <option value="10" selected>10 steps/s</option>
+            <option value="20">20 steps/s</option>
+            <option value="30">30 steps/s</option>
+            <option value="60">60 steps/s</option>
+          </select>
+        </label>
+        <label class="inline"><input id="loop" type="checkbox"> loop</label>
+        <label class="inline"><input id="follow" type="checkbox"> follow live</label>
+      </div>
+
+      <div id="readout" class="readout"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Parameters</h2>
+        <span class="spacer"></span>
+        <label>X axis <select id="xcol"></select></label>
+      </div>
+      <div id="params" class="chips"></div>
+      <div id="plots"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

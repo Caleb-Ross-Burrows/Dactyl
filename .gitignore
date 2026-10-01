@@ -3,3 +3,6 @@ __pycache__
 
 *.ans
 *.fem
+# Saved simulation runs and the locally cached Plotly bundle
+results/
+viewer/static/vendor/
