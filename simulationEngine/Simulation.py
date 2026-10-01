@@ -1,6 +1,7 @@
+import math
+import warnings
+
 import femm
-import  matplotlib.pyplot as plt
-import numpy as np 
 
 from Coil import Coil
 from Payload import Payload
@@ -8,12 +9,23 @@ from Payload import Payload
 
 
 class Simulation:
+    # Clearance (m) used when grouping the payload geometry by rectangle select.
+    # Nothing else may sit closer than this to the payload, or it would get grouped (and moved) too.
+    GROUP_MARGIN = 1e-4
+
     def __init__(self, time_step: float) -> None:
+        if time_step <= 0:
+            raise ValueError("time_step must be greater than zero")
+
         self.time = 0
         self.dt = time_step
 
         self.payload = None
         self.payload_label = None     
+
+        # Open air label, kept off the r=0 axis and behind the payload start (z < 0)
+        self.air_label = (0.001, -0.001)
+        self._abc_created = False
 
         self.coils = None
         # Define the 'finish line' in define_coils()
@@ -34,8 +46,15 @@ class Simulation:
         femm.mi_getmaterial("Air")
 
         # The payload should never end up in -z so it should be fine to initialize air like this
-        femm.mi_addblocklabel(0.001, -0.001)
-        femm.mi_selectlabel(0.001, -0.001)
+        self._set_air_label()
+
+
+    def _set_air_label(self) -> None:
+        # Safe to call repeatedly: adding a label on top of an existing one is a no-op in FEMM,
+        # so this also restores the air label if FEMM drops it after a geometry edit.
+        r, z = self.air_label
+        femm.mi_addblocklabel(r, z)
+        femm.mi_selectlabel(r, z)
 
         femm.mi_setblockprop(
             "Air",
@@ -54,7 +73,7 @@ class Simulation:
         femm.mi_addcircprop(
             coil_id,
             coil.current,
-            0       # 0 for Series, 1 for parallel
+            1       # FEMM: 0 = parallel, 1 = series. Only series applies the block's turn count (J = N*i/A)
         )
 
         # Enclosed region for the coil
@@ -89,6 +108,13 @@ class Simulation:
 
 
     def define_coils(self, coil_array: list[Coil], coil_spacing: float) -> None:
+        if self.coils is not None:
+            raise RuntimeError("Coils have already been defined for this simulation")
+        if not coil_array:
+            raise ValueError("coil_array must contain at least one coil")
+        if coil_spacing <= 0:
+            raise ValueError("coil_spacing must be greater than zero (coils would overlap)")
+
         # Load coils into sim
         self.coils = coil_array
 
@@ -105,8 +131,24 @@ class Simulation:
 
     # The z_coord is the "furthest back" point of the payload
     def define_payload(self, payload: Payload, z_coord) -> None:
+        if self.payload is not None:
+            raise RuntimeError("A payload has already been defined for this simulation")
+        if z_coord < 0:
+            raise ValueError("z_coord must be >= 0, the open-air label sits behind z = 0")
+
+        # The payload must fit inside the coil bore, otherwise the geometries intersect
+        if self.coils:
+            payload_outer = payload.outer_radius if payload.type == "tube" else payload.radius
+            min_bore = min(coil.inner_radius for coil in self.coils)
+            if payload_outer + 2 * self.GROUP_MARGIN >= min_bore:
+                raise ValueError(
+                    f"Payload outer radius ({payload_outer} m) must be smaller than the "
+                    f"coil inner radius ({min_bore} m) with at least {2 * self.GROUP_MARGIN} m clearance"
+                )
+
         # Load payload into sim
         self.payload = payload
+        self.payload.z = z_coord
 
         femm.mi_getmaterial(payload.material)
 
@@ -161,6 +203,8 @@ class Simulation:
                 r_min, r_max = payload.inner_radius, payload.outer_radius
                 z_min, z_max = z_coord, z_coord + payload.length
 
+            case _:
+                raise ValueError(f"Unsupported payload type: {payload.type!r}")
 
         # Add and select a block label inside the payload's cross-section.
         femm.mi_addblocklabel(label_r, label_z)
@@ -181,23 +225,34 @@ class Simulation:
         femm.mi_clearselected()
 
         # Add payload vertices to group 2 as well
-        m = 1e-4
+        m = self.GROUP_MARGIN
         femm.mi_clearselected()
         femm.mi_selectrectangle(r_min - m, z_min - m, r_max + m, z_max + m, 4)  # 4 = all entity types
         femm.mi_setgroup(2)
         femm.mi_clearselected()
 
+
+    def _check_ready(self) -> None:
+        if not self.coils:
+            raise RuntimeError("Call define_coils() before running the simulation")
+        if self.payload is None or self.payload_label is None:
+            raise RuntimeError("Call define_payload() before running the simulation")
+
+
     def run_single_step(self) -> None:
-        if self.time == 0:
-            # Boundary condition
+        self._check_ready()
+
+        if not self._abc_created:
+            # Boundary condition, only create it once or the shells get duplicated
             femm.mi_makeABC()
+            self._abc_created = True
 
         femm.mi_saveas("run.fem")
         femm.mi_analyze()
         femm.mi_loadsolution()
 
         self.payload.force = self.get_payload_force()
-        print(self.payload.force)
+        print(f"t = {self.time:.4f} s, z = {self.payload.z:.4f} m, F = {self.payload.force:.4f} N")
 
         self.time += self.dt
 
@@ -213,15 +268,22 @@ class Simulation:
         self.payload.z = self.payload.z + self.payload.v * self.dt
 
         dz = self.payload.z - old_z
-        print(dz)
-        # Translate payload
-        femm.mo_close()
-        femm.mi_selectgroup(2)
-        femm.mi_movetranslate(0, dz)
-        femm.mi_clearselected()
 
-        r, z = self.payload_label
-        self.payload_label = (r, z + dz)
+        # close the post-processor window before editing the model again
+        femm.mo_close()
+
+        if dz != 0:
+            # Translate payload
+            femm.mi_clearselected()
+            femm.mi_selectgroup(2)
+            femm.mi_movetranslate(0, dz)
+            femm.mi_clearselected()
+
+            r, z = self.payload_label
+            self.payload_label = (r, z + dz)
+
+        # Make sure the move didn't remove the open-air properties
+        self._set_air_label()
     
 
     def get_payload_force(self) -> float:
@@ -234,10 +296,41 @@ class Simulation:
         force_z = femm.mo_blockintegral(19)
 
         femm.mo_clearblock()
+
+        if force_z is None or not math.isfinite(force_z):
+            raise RuntimeError(
+                f"Invalid force from FEMM ({force_z!r}). Check that the payload label "
+                f"{self.payload_label} is inside the payload and that the solution loaded."
+            )
         return force_z
 
 
-    def run(self):
+    def run(self, max_steps: int = 10000, max_time: float | None = None) -> None:
+        self._check_ready()
+
+        steps = 0
         while self.payload.z < self.max_z:
+            if steps >= max_steps:
+                warnings.warn(f"Stopped after {max_steps} steps without reaching the end of the coils")
+                break
+            if max_time is not None and self.time >= max_time:
+                warnings.warn(f"Stopped at max_time = {max_time} s without reaching the end of the coils")
+                break
+
             self.run_single_step()
             self.update_payload()
+            steps += 1
+
+            # Moving backwards past the start would put the payload into the open-air label
+            if self.payload.z < 0:
+                warnings.warn("Payload moved behind z = 0, stopping the simulation")
+                break
+
+
+    def close(self) -> None:
+        # Close any open post-processor window, then FEMM itself
+        try:
+            femm.mo_close()
+        except Exception:
+            pass
+        femm.closefemm()

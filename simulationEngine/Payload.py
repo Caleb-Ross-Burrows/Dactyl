@@ -12,6 +12,9 @@ class Payload:
             inner_radius: float | None = None,
             outer_radius: float | None = None,
     ):
+        if mass <= 0:
+            raise ValueError("mass must be greater than zero")
+
         self.z = 0
         self.v = 0
         self.force = 0

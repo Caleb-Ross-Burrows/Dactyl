@@ -4,15 +4,21 @@ from Payload import Payload
 
 coil_array = []
 for i in range (3):
-    coil = Coil(0.1, 0.2, 1000, 10, 1000)
+    coil = Coil(
+        inner_radius=0.1,
+        length=0.2,
+        turns=500,
+        awg=10,
+        current=10,
+    )
     coil_array.append(coil)
 
 payload = Payload(
     type="cylinder",
     material="Pure Iron",
     mass=10,
-    radius=0.05,
-    length=0.1
+    radius=0.08,
+    length=0.1,
 )
 
 sim = Simulation(0.1)

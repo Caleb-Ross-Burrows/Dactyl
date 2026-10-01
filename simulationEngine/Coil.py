@@ -5,6 +5,13 @@ import math
 # Distance units are all meters, current units are amps
 class Coil:
     def __init__(self, inner_radius: float, length: float, turns: int, awg: int, current: float):
+        if inner_radius <= 0:
+            raise ValueError("inner_radius must be greater than zero")
+        if length <= 0:
+            raise ValueError("length must be greater than zero")
+        if turns <= 0:
+            raise ValueError("turns must be greater than zero")
+
         self.inner_radius = inner_radius
         self.length = length
         self.turns = turns
