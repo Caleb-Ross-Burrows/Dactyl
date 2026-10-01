@@ -5,12 +5,19 @@ class Payload:
             self,
             type: str,
             material: str,
+            mass: float,    # in kgs, this includes non-magnetic mass of the payload
             *,
             radius: float | None = None,
             length: float | None = None,
             inner_radius: float | None = None,
             outer_radius: float | None = None,
     ):
+        self.z = 0
+        self.v = 0
+        self.force = 0
+        self.a = 0
+        self.mass = mass
+        
         geometry_type = type.strip().lower()
 
         required = {
