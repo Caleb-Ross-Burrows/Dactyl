@@ -26,8 +26,11 @@ class Mesh:
     triangulation: Triangulation
     labels: np.ndarray       # block label index of each element
     area: np.ndarray         # (r, z) area of each element, m^2
+    b_r_elem: np.ndarray     # signed radial flux density of each element, T
+    b_z_elem: np.ndarray     # signed axial flux density of each element, T
     b_elem: np.ndarray       # |B| of each element, T
-    b_node: np.ndarray       # |B| averaged onto the nodes, T
+    b_r_node: np.ndarray     # signed radial flux density averaged onto the nodes, T
+    b_z_node: np.ndarray     # signed axial flux density averaged onto the nodes, T
 
     def label_at(self, r: float, z: float) -> int | None:
         """Block label index of the element containing (r, z), or None if outside the mesh."""
@@ -89,32 +92,62 @@ def read_solution(path) -> Mesh:
     r_centroid = np.maximum((r0 + r1 + r2) / 3, 1e-9)
     b_r = -dphi_dz / (2 * np.pi * r_centroid)
     b_z = dphi_dr / (2 * np.pi * r_centroid)
-    b_elem = np.nan_to_num(np.hypot(b_r, b_z))
+
+    # Phi = 2*pi*r*A_theta = pi*Bz*r^2 on the axis for a locally uniform axial field.
+    # Linear triangles touching r=0 cannot represent this quadratic behavior: dividing their
+    # constant dPhi/dr by a centroid radius overestimates Bz. Estimate Bz from Phi/(pi*r^2)
+    # at the off-axis vertices instead. FEMM uses its own axis-element treatment; this limit
+    # matches mo_getb much more closely than the naive gradient/r-centroid expression.
+    axis_elements = np.any(np.abs(np.stack((r0, r1, r2), axis=1)) <= 1e-12, axis=1)
+    axis_bz_sum = np.zeros(len(elements))
+    axis_bz_count = np.zeros(len(elements))
+    for k in range(3):
+        rk = (r0, r1, r2)[k]
+        pk = (p0, p1, p2)[k]
+        valid = axis_elements & (rk > 1e-12)
+        axis_bz_sum[valid] += pk[valid] / (np.pi * rk[valid] ** 2)
+        axis_bz_count[valid] += 1
+    has_axis_limit = axis_bz_count > 0
+    b_z[has_axis_limit] = axis_bz_sum[has_axis_limit] / axis_bz_count[has_axis_limit]
+
+    b_r = np.nan_to_num(b_r)
+    b_z = np.nan_to_num(b_z)
+    b_elem = np.hypot(b_r, b_z)
     area = np.abs(twice_area) / 2
 
-    # Area-weighted average onto the nodes, so the plot is smooth instead of faceted
-    weighted = np.zeros(n_nodes)
+    # Area-weighted average of signed components onto the nodes. Averaging |B| instead
+    # would lose cancellation of Br on the symmetry axis and create an artificial axis peak.
+    weighted_r = np.zeros(n_nodes)
+    weighted_z = np.zeros(n_nodes)
     weights = np.zeros(n_nodes)
     for k in range(3):
-        weighted += np.bincount(corners[:, k], weights=b_elem * area, minlength=n_nodes)
+        weighted_r += np.bincount(corners[:, k], weights=b_r * area, minlength=n_nodes)
+        weighted_z += np.bincount(corners[:, k], weights=b_z * area, minlength=n_nodes)
         weights += np.bincount(corners[:, k], weights=area, minlength=n_nodes)
-    b_node = np.divide(weighted, weights, out=np.zeros(n_nodes), where=weights > 0)
+    b_r_node = np.divide(weighted_r, weights, out=np.zeros(n_nodes), where=weights > 0)
+    b_z_node = np.divide(weighted_z, weights, out=np.zeros(n_nodes), where=weights > 0)
+    b_r_node[np.abs(r) <= 1e-12] = 0.0       # axisymmetric regularity condition: Br(0,z) = 0
 
     return Mesh(
         triangulation=Triangulation(r, z, corners),
         labels=elements[:, 3],
         area=area,
+        b_r_elem=b_r,
+        b_z_elem=b_z,
         b_elem=b_elem,
-        b_node=b_node,
+        b_r_node=b_r_node,
+        b_z_node=b_z_node,
     )
 
 
 def sample_density(mesh: Mesh, r_axis: np.ndarray, z_axis: np.ndarray) -> np.ndarray:
     """|B| in tesla on the regular grid r_axis x z_axis, shape (len(r), len(z)). NaN outside the mesh."""
-    interpolator = LinearTriInterpolator(mesh.triangulation, mesh.b_node)
+    br_interpolator = LinearTriInterpolator(mesh.triangulation, mesh.b_r_node)
+    bz_interpolator = LinearTriInterpolator(mesh.triangulation, mesh.b_z_node)
     r_grid, z_grid = np.meshgrid(r_axis, z_axis, indexing="ij")
-    values = interpolator(r_grid, z_grid)
-    return np.ma.filled(values.astype(float), np.nan).astype(np.float32)
+    br = np.ma.filled(br_interpolator(r_grid, z_grid).astype(float), np.nan)
+    bz = np.ma.filled(bz_interpolator(r_grid, z_grid).astype(float), np.nan)
+    return np.hypot(br, bz).astype(np.float32)
 
 
 def region_stats(mesh: Mesh, r: float, z: float) -> dict:
