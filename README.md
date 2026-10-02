@@ -54,10 +54,12 @@ Wine location, set `DACTYL_FEMM_PATH` to the folder containing `femm.exe`.
 
 Every simulation records itself to `results/<run id>/` (turn this off with `Simulation(dt, record=False)`).
 Open the viewer as above to look at any run, finished or in progress.
+The recorder keeps the 10 newest finished runs and removes older finished runs automatically; runs currently
+in progress are never removed.
 
 * **Flux density |B|** - an animated density plot of the axisymmetric cross-section (mirrored about the axis),
   with the coils and the payload drawn on top. Play/pause, scrub, step with the arrow keys and change the colour range.
-* **Playback speed** - *Real time* plays the simulated clock against the wall clock (1x, or slowed down / sped up),
+* **Playback speed** - *Real time* plays the simulated clock against the wall clock (1× or slower),
   skipping frames if the display can't keep up. *Steps per second* plays every recorded step at a fixed rate instead.
 * **Parameters** - tick any recorded quantity (force, velocity, position, kinetic energy, work done, |B| in the
   payload, coil flux linkage and resistive drop, ...) to get a plot of it, against time, position or step. Click a plot to

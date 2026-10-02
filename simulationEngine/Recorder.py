@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,46 @@ import numpy as np
 import FieldExtract
 
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
+KEEP_FINISHED_RUNS = 10
+
+
+def prune_old_runs(results_dir, keep: int = KEEP_FINISHED_RUNS) -> list[str]:
+    """Keep the newest `keep` finished runs; never remove a run still in progress.
+
+    Only immediate child directories with a readable meta.json and a terminal status are candidates.
+    Returns the run directory names that were removed.
+    """
+    root = Path(results_dir).resolve()
+    if not root.is_dir():
+        return []
+
+    finished = []
+    terminal_statuses = {"complete", "stopped", "interrupted", "error"}
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir() or run_dir.parent.resolve() != root:
+            continue
+        try:
+            meta = json.loads((run_dir / "meta.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("status") not in terminal_statuses:
+            continue
+        # Use the recorded finish time when available; created time and mtime cover legacy runs.
+        finished.append((run_dir.stat().st_mtime, run_dir))
+
+    finished.sort(key=lambda item: item[0], reverse=True)
+    removed = []
+    for _, run_dir in finished[max(0, keep):]:
+        # Re-resolve immediately before removal and refuse anything outside the results root.
+        resolved = run_dir.resolve()
+        if resolved.parent != root:
+            continue
+        try:
+            shutil.rmtree(resolved)
+            removed.append(run_dir.name)
+        except FileNotFoundError:
+            pass
+    return removed
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -39,6 +80,7 @@ class RunRecorder:
         grid_cell:   size in metres of one density-plot cell (default: chosen from the geometry)
         """
         root = Path(results_dir) if results_dir else DEFAULT_RESULTS_DIR
+        prune_old_runs(root)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = "-" + re.sub(r"[^\w.-]+", "_", name) if name else ""
         self.run_id = stamp + suffix
@@ -188,3 +230,5 @@ class RunRecorder:
             self.meta["message"] = message
             self.meta["finished"] = datetime.now().isoformat(timespec="seconds")
             self._write_meta()
+            # Clean up only after this run is marked terminal; active runs are never pruned.
+            prune_old_runs(self.dir.parent)
