@@ -266,9 +266,8 @@ def validate(raw, library="auto"):
         density = coil.peak_current / (coil.wire_area * 1e6)
         if density > 10:
             check.warn(prefix, f"{density:.0f} A/mm² in the wire is well above what real wire can carry continuously (about 5-10)")
-        capacity = max(1, math.floor(length / coil.wire_diameter)) * round((coil.outer_radius - inner) / coil.wire_diameter)
-        if turns > capacity:
-            check.warn(prefix, f"the winding space only fits about {capacity} turns of this wire, but {turns} are modelled")
+        if coil.wire_diameter > length:
+            check.warn(prefix, f"the wire ({coil.wire_diameter * 1000:.1f} mm) is thicker than the coil is long ({length * 1000:.0f} mm), so it is modelled as one turn per layer")
         coil_objects.append(coil)
         coil_configs.append({"inner_radius": inner, "length": length, "turns": turns, "awg": awg, "current": current,
                              "schedule": schedule_config})

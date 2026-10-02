@@ -28,23 +28,25 @@ class Coil:
         self.wire_diameter = 0.127 * 92**((36 - self.awg) / 39) / 1000
         self.wire_area = 0.25 * math.pi * self.wire_diameter**2
 
-        num_of_layers = math.floor(self.turns * self.wire_diameter / self.length)
+        # Wound in whole turns: each layer holds as many turns as fit along the length, and the last
+        # layer may be only partly filled.
+        self.turns_per_layer = max(1, math.floor(self.length / self.wire_diameter))
+        self.num_of_layers = math.ceil(self.turns / self.turns_per_layer)
+        # Fewer turns than fit in one layer
+        sparse = self.turns < self.turns_per_layer
 
-        if num_of_layers < 1:
+        if sparse:
             warnings.warn(
                 "Coil is sparsely wound, results may be innacurate. For complete coil: turns * wire diameter should be greater than or equal to coil length"
                 )
 
-        self.outer_radius = max(
-            self.inner_radius + self.wire_diameter * num_of_layers,
-            self.inner_radius + self.wire_diameter
-            )
+        self.outer_radius = self.inner_radius + self.wire_diameter * self.num_of_layers
 
         # If coil is sparsely wound, approximate current density by multiplying standard current density 
         # by ratio of total wire x-section area vs total coil x-section area
         wire_current_density = self.peak_current / self.wire_area
         self.current_density = (
-            wire_current_density if num_of_layers >= 1
+            wire_current_density if not sparse
             else wire_current_density * (self.turns * self.wire_area) / (self.length*(self.outer_radius - self.inner_radius))
         )
 
