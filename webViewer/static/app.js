@@ -11,6 +11,11 @@ const POLL_MS = 1500;
 const PREFETCH_AHEAD = 8;
 const MAX_CACHED_FRAMES = 300;
 const DEFAULT_PARAMS = ["force", "v", "z"];
+const DEFAULT_DENSITY_COLOURS = "Inferno";
+
+function densityColours() {
+  return document.querySelector("#density-colours")?.value || DEFAULT_DENSITY_COLOURS;
+}
 
 // column -> [label, unit]
 const LABELS = {
@@ -174,7 +179,7 @@ async function initDensity() {
   $("#density").innerHTML = "";
   await Plotly.newPlot("density", [{
     type: "heatmap", x: state.axes.x, y: state.axes.y, z: empty,
-    zmin: 0, zmax: colourMax(), colorscale: "Inferno", zsmooth: "fast",
+    zmin: 0, zmax: colourMax(), colorscale: densityColours(), zsmooth: "fast",
     colorbar: { title: { text: "|B| (T)" }, thickness: 14 },
     hovertemplate: "z = %{x:.3f} m<br>r = %{y:.3f} m<br>|B| = %{z:.4f} T<extra></extra>",
   }], baseLayout({
@@ -552,6 +557,14 @@ function wireEvents() {
   $("#xcol").addEventListener("change", (e) => { state.xcol = e.target.value; buildPlots(); });
   $("#cmax").addEventListener("input", () => { $("#cmax-auto").checked = false; if (state.densityReady) Plotly.restyle("density", { zmax: [colourMax()] }); });
   $("#cmax-auto").addEventListener("change", () => { syncColourInput(); if (state.densityReady) Plotly.restyle("density", { zmax: [colourMax()] }); });
+  const savedDensityColours = localStorage.getItem("dactyl.densityColours");
+  if (savedDensityColours && [...$("#density-colours").options].some((o) => o.value === savedDensityColours)) {
+    $("#density-colours").value = savedDensityColours;
+  }
+  $("#density-colours").addEventListener("change", (e) => {
+    localStorage.setItem("dactyl.densityColours", e.target.value);
+    if (state.densityReady) Plotly.restyle("density", { colorscale: [e.target.value] });
+  });
   $("#follow").addEventListener("change", (e) => { if (e.target.checked && state.n) showFrame(state.n - 1); });
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(document.activeElement.tagName) && document.activeElement.type !== "range") return;

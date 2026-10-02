@@ -50,6 +50,7 @@ class Simulation:
         # Open air label, placed by define_coils() once the coil size is known
         self.air_label = None
         self._abc_created = False
+        self._large_motion_step_warned = False
 
         self.coils = None
         self.coil_currents = {}  # current applied to each coil in the latest step, A
@@ -362,6 +363,16 @@ class Simulation:
         self.payload.z = self.payload.z + self.payload.v * self.dt
 
         dz = self.payload.z - old_z
+
+        # A large displacement samples too little of the changing field per solve. This commonly
+        # looks like field/force "vibration" in the animation, especially near coil and material edges.
+        if (not self._large_motion_step_warned and self.coils
+                and abs(dz) > 0.05 * min(coil.length for coil in self.coils)):
+            warnings.warn(
+                f"Payload moved {abs(dz):.4g} m in one {self.dt:g} s step (over 5% of the shortest coil length). "
+                "The trajectory and B-field animation may skip rapid spatial changes; reduce the time step."
+            )
+            self._large_motion_step_warned = True
 
         # close the post-processor window before editing the model again
         femm.mo_close()

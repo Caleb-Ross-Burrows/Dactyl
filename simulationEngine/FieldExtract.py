@@ -21,6 +21,14 @@ from matplotlib.tri import LinearTriInterpolator, Triangulation
 
 
 @dataclass
+class RegionField:
+    """Per-material interpolation mesh; interface nodes are not shared with other blocks."""
+    triangulation: Triangulation
+    b_r_node: np.ndarray
+    b_z_node: np.ndarray
+
+
+@dataclass
 class Mesh:
     """A solved FEMM mesh with the flux density already computed."""
     triangulation: Triangulation
@@ -29,8 +37,7 @@ class Mesh:
     b_r_elem: np.ndarray     # signed radial flux density of each element, T
     b_z_elem: np.ndarray     # signed axial flux density of each element, T
     b_elem: np.ndarray       # |B| of each element, T
-    b_r_node: np.ndarray     # signed radial flux density averaged onto the nodes, T
-    b_z_node: np.ndarray     # signed axial flux density averaged onto the nodes, T
+    regions: dict[int, RegionField]
 
     def label_at(self, r: float, z: float) -> int | None:
         """Block label index of the element containing (r, z), or None if outside the mesh."""
@@ -115,38 +122,62 @@ def read_solution(path) -> Mesh:
     b_elem = np.hypot(b_r, b_z)
     area = np.abs(twice_area) / 2
 
-    # Area-weighted average of signed components onto the nodes. Averaging |B| instead
-    # would lose cancellation of Br on the symmetry axis and create an artificial axis peak.
-    weighted_r = np.zeros(n_nodes)
-    weighted_z = np.zeros(n_nodes)
-    weights = np.zeros(n_nodes)
-    for k in range(3):
-        weighted_r += np.bincount(corners[:, k], weights=b_r * area, minlength=n_nodes)
-        weighted_z += np.bincount(corners[:, k], weights=b_z * area, minlength=n_nodes)
-        weights += np.bincount(corners[:, k], weights=area, minlength=n_nodes)
-    b_r_node = np.divide(weighted_r, weights, out=np.zeros(n_nodes), where=weights > 0)
-    b_z_node = np.divide(weighted_z, weights, out=np.zeros(n_nodes), where=weights > 0)
-    b_r_node[np.abs(r) <= 1e-12] = 0.0       # axisymmetric regularity condition: Br(0,z) = 0
+    block_labels = elements[:, 3]
+    regions = {}
+
+    # Interpolate each FEMM block/material on its own mesh. Sharing nodal averages across
+    # iron/air boundaries smooths a real B discontinuity, and remeshing moves that blend,
+    # which appears as frame-to-frame field vibration. Separate meshes are one-sided at interfaces.
+    for block in np.unique(block_labels):
+        selected = np.flatnonzero(block_labels == block)
+        old_nodes, inverse = np.unique(corners[selected].ravel(), return_inverse=True)
+        local_triangles = inverse.reshape(-1, 3)
+        local_r, local_z = r[old_nodes], z[old_nodes]
+        n_local = len(old_nodes)
+
+        weighted_r = np.zeros(n_local)
+        weighted_z = np.zeros(n_local)
+        weights = np.zeros(n_local)
+        for k in range(3):
+            weighted_r += np.bincount(local_triangles[:, k], weights=b_r[selected] * area[selected], minlength=n_local)
+            weighted_z += np.bincount(local_triangles[:, k], weights=b_z[selected] * area[selected], minlength=n_local)
+            weights += np.bincount(local_triangles[:, k], weights=area[selected], minlength=n_local)
+        local_br = np.divide(weighted_r, weights, out=np.zeros(n_local), where=weights > 0)
+        local_bz = np.divide(weighted_z, weights, out=np.zeros(n_local), where=weights > 0)
+        local_br[np.abs(local_r) <= 1e-12] = 0.0       # axisymmetric regularity: Br(0,z) = 0
+        regions[int(block)] = RegionField(
+            triangulation=Triangulation(local_r, local_z, local_triangles),
+            b_r_node=local_br,
+            b_z_node=local_bz,
+        )
 
     return Mesh(
         triangulation=Triangulation(r, z, corners),
-        labels=elements[:, 3],
+        labels=block_labels,
         area=area,
         b_r_elem=b_r,
         b_z_elem=b_z,
         b_elem=b_elem,
-        b_r_node=b_r_node,
-        b_z_node=b_z_node,
+        regions=regions,
     )
 
 
 def sample_density(mesh: Mesh, r_axis: np.ndarray, z_axis: np.ndarray) -> np.ndarray:
     """|B| in tesla on the regular grid r_axis x z_axis, shape (len(r), len(z)). NaN outside the mesh."""
-    br_interpolator = LinearTriInterpolator(mesh.triangulation, mesh.b_r_node)
-    bz_interpolator = LinearTriInterpolator(mesh.triangulation, mesh.b_z_node)
     r_grid, z_grid = np.meshgrid(r_axis, z_axis, indexing="ij")
-    br = np.ma.filled(br_interpolator(r_grid, z_grid).astype(float), np.nan)
-    bz = np.ma.filled(bz_interpolator(r_grid, z_grid).astype(float), np.nan)
+    br = np.full(r_grid.shape, np.nan, dtype=float)
+    bz = np.full(z_grid.shape, np.nan, dtype=float)
+    for region in mesh.regions.values():
+        br_region = np.ma.filled(
+            LinearTriInterpolator(region.triangulation, region.b_r_node)(r_grid, z_grid).astype(float), np.nan
+        )
+        bz_region = np.ma.filled(
+            LinearTriInterpolator(region.triangulation, region.b_z_node)(r_grid, z_grid).astype(float), np.nan
+        )
+        # Blocks are disjoint; at grid points lying exactly on an interface, keep the first block's side.
+        mask = np.isnan(br) & np.isfinite(br_region) & np.isfinite(bz_region)
+        br[mask] = br_region[mask]
+        bz[mask] = bz_region[mask]
     return np.hypot(br, bz).astype(np.float32)
 
 

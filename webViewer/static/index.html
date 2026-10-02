@@ -109,6 +109,15 @@
         <h2>Flux density |B|</h2>
         <span class="muted">axisymmetric cross-section, mirrored about the axis (r = 0)</span>
         <span class="spacer"></span>
+        <label>Colours
+          <select id="density-colours" title="Choose the flux-density colour scale">
+            <option value="Turbo">Turbo (high contrast)</option>
+            <option value="Inferno" selected>Inferno</option>
+            <option value="Viridis">Viridis</option>
+            <option value="Cividis">Cividis</option>
+            <option value="Hot">Hot</option>
+          </select>
+        </label>
         <label>Colour max (T) <input id="cmax" type="number" step="any" min="0"></label>
         <label class="inline"><input id="cmax-auto" type="checkbox" checked> auto</label>
       </div>
