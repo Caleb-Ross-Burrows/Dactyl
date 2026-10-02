@@ -49,8 +49,6 @@ PAYLOAD_TYPES = {
     "cylinder": ("radius", "length"),
     "tube": ("inner_radius", "outer_radius", "length"),
 }
-PAYLOAD_DIMENSIONS = ("radius", "length", "inner_radius", "outer_radius")
-
 DEFAULT_CONFIG = {
     "name": "",
     "dt": 0.02,

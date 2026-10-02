@@ -19,7 +19,6 @@
     job: null,
     pollTimer: null,
     openedRun: null,      // run id of the job we already switched the viewer to
-    previewReady: false,
   };
 
   const FIELD_NAMES = {

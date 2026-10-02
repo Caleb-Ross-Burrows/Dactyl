@@ -86,7 +86,7 @@ async function ensurePlotly() {
     try { await loadScript(src); } catch (_) { /* try the next source */ }
   }
   if (!window.Plotly) {
-    throw new Error("Could not load Plotly. Connect to the internet once, or save plotly.min.js to viewer/static/vendor/.");
+    throw new Error("Could not load Plotly. Connect to the internet once, or save plotly.min.js to webViewer/static/vendor/.");
   }
 }
 

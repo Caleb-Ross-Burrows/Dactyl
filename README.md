@@ -5,9 +5,6 @@ The goal of this project is to model a moving, ferromagnetic payload inside a se
 
 It works by running a static simulation for a certain time step and using simple Euler integration to advance the payload position based on the force calculated by FEMM. At the moment this system neglects a lot of time dependent considerations (things like back-emf or the response of the power supply) however it is still a useful tool for modelling and optimizing mass driver geometry.
 
-Installation:
-
-
 ## Running simulations
 
 The easiest way is the browser. Start the viewer and open the **New simulation** panel at the top of the page:

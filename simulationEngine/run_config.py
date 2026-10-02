@@ -34,7 +34,7 @@ def load_config(argument):
 
 def run(raw_config) -> str:
     """Validate the settings, run the simulation and return how it ended."""
-    config, warnings_, geometry = SimConfig.validate(raw_config)
+    config, warnings_, _geometry = SimConfig.validate(raw_config)
     for w in warnings_:
         print(f"warning: {w['field']}: {w['message']}", flush=True)
 

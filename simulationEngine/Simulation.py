@@ -27,10 +27,10 @@ class Simulation:
                      contain this range, and the run stops if the payload goes behind it.
         femm_path:   folder containing femm.exe, if FEMM is not installed in the default Wine location
         config:      the settings this run was built from, stored with the run so it can be reloaded in the viewer
-        record:      save every step to disk so it can be opened in the web viewer (viewer/server.py)
+        record:      save every step to disk so it can be opened in the web viewer (webViewer/server.py)
         results_dir: where to save runs (default: <repo>/results)
         run_name:    optional label added to the run's folder name
-        grid_cell:   density-plot cell size in metres (default: chosen from the geometry)
+        grid_cell:   density-plot cell size in metres (default: chosen from the model geometry)
         """
         if time_step <= 0:
             raise ValueError("time_step must be greater than zero")
@@ -355,9 +355,9 @@ class Simulation:
         old_z = self.payload.z
 
         # a = F/m
-        self.payload.a = self.payload.force / self.payload.mass
+        acceleration = self.payload.force / self.payload.mass
         # v' = v + a * dt
-        self.payload.v = self.payload.v + self.payload.a * self.dt
+        self.payload.v = self.payload.v + acceleration * self.dt
         # z' = z + v' * dt
         self.payload.z = self.payload.z + self.payload.v * self.dt
 

@@ -18,7 +18,6 @@ class Payload:
         self.z = 0
         self.v = 0
         self.force = 0
-        self.a = 0
         self.mass = mass
         
         geometry_type = type.strip().lower()

@@ -1,5 +1,5 @@
 """
-Saves a simulation run to disk so the web viewer (viewer/server.py) can display it.
+Saves a simulation run to disk so the web viewer (webViewer/server.py) can display it.
 
 results/<run id>/
     meta.json        geometry, grid definition, status        (rewritten atomically)
@@ -77,7 +77,7 @@ class RunRecorder:
         """
         results_dir: where runs are stored (default: <repo>/results)
         name:        optional label appended to the run id
-        grid_cell:   size in metres of one density-plot cell (default: chosen from the geometry)
+        grid_cell:   size in metres of one density-plot cell (default: chosen from the model geometry)
         """
         root = Path(results_dir) if results_dir else DEFAULT_RESULTS_DIR
         prune_old_runs(root)
